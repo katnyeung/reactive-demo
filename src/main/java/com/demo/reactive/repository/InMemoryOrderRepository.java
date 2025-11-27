@@ -36,8 +36,9 @@ public class InMemoryOrderRepository {
                 order.setStatus(status);
                 order.setUpdatedAt(LocalDateTime.now());
                 orders.put(id, order);
+                return order;
             }
-            return order;
-        });
+            return null;
+        }).flatMap(order -> order != null ? Mono.just(order) : Mono.empty());
     }
 }

@@ -8,6 +8,7 @@ import com.google.cloud.spring.pubsub.reactive.PubSubReactiveFactory;
 import com.google.cloud.spring.pubsub.support.AcknowledgeablePubsubMessage;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
@@ -19,7 +20,11 @@ public class OrderSubscriberService {
     private final InMemoryOrderRepository orderRepository;
     private final BigQueryService bigQueryService;
     private final ObjectMapper objectMapper;
+
+    @Autowired(required = false)
     private PubSubReactiveFactory pubSubReactiveFactory;
+
+    @Value("${pubsub.subscription.orders:}")
     private String subscriptionName;
 
     public OrderSubscriberService(
@@ -31,17 +36,9 @@ public class OrderSubscriberService {
         this.objectMapper = objectMapper;
     }
 
-    public void setPubSubReactiveFactory(PubSubReactiveFactory factory) {
-        this.pubSubReactiveFactory = factory;
-    }
-
-    public void setSubscriptionName(String subscriptionName) {
-        this.subscriptionName = subscriptionName;
-    }
-
     @PostConstruct
     public void startSubscription() {
-        if (pubSubReactiveFactory != null && subscriptionName != null) {
+        if (pubSubReactiveFactory != null && subscriptionName != null && !subscriptionName.isEmpty()) {
             log.info("Starting reactive subscription on {}", subscriptionName);
             pubSubReactiveFactory.poll(subscriptionName, 1000)
                     .flatMap(msg -> processMessage(msg)
@@ -52,6 +49,8 @@ public class OrderSubscriberService {
                             })
                             .onErrorResume(e -> Mono.empty()))
                     .subscribe();
+        } else {
+            log.warn("PubSub not configured, skipping subscription");
         }
     }
 
@@ -64,8 +63,13 @@ public class OrderSubscriberService {
                 .flatMap(order -> {
                     log.info("Processing order {}", order.getId());
                     return orderRepository.updateStatus(order.getId(), OrderStatus.PROCESSING)
-                            .then(processOrder(order))
-                            .flatMap(processed -> orderRepository.updateStatus(order.getId(), OrderStatus.COMPLETED))
+                            .switchIfEmpty(Mono.defer(() -> {
+                                log.warn("Order {} not found, using message data", order.getId());
+                                return Mono.just(order);
+                            }))
+                            .flatMap(this::processOrder)
+                            .flatMap(processed -> orderRepository.updateStatus(processed.getId(), OrderStatus.COMPLETED)
+                                    .defaultIfEmpty(processed))
                             .flatMap(completed -> bigQueryService.insertOrder(completed).thenReturn(completed));
                 });
     }
