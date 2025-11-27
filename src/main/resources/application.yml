@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: reactive-demo
+  cloud:
+    gcp:
+      project-id: demo-project
+      pubsub:
+        emulator-host: ${PUBSUB_EMULATOR_HOST:localhost:8085}
+
+pubsub:
+  topic:
+    orders: orders-topic
+  subscription:
+    orders: orders-subscription
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.demo.reactive: DEBUG
+    com.google.cloud.pubsub: INFO
